@@ -1,215 +1,113 @@
-#include <assert.h>
-#include <math.h>#include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <mpi.h>
-#include <memory.h>
-#define ROWMJR(R, C, NR, NC) (R*NC+C)
-#define COLMJR(R, C, NR, NC) (C*NR+R)
-#define a(R, C) a[ROWMJR(R,C,ln,n)]
-#define b(R, C) b[ROWMJR(R,C,nn,n)]
-#define MAIN_PROCESS 0
-#define SEND_NUM_TAG 0
-#define SEND_DISPLS_TAG 1
-#define SEND_ELEMNTS_TAG 2
-#define SEND_WEIGHT_TAG 3
-#define SEND_COUNTS_TAG 4
-#define SEND_RESULT_TAG 5
-
-static void calculateDispls(int ** displs, int ** localNumOfElements, int numberOfProcessors, int size){
-    int local, reminder;
-    if (size < numberOfProcessors){
-        local = 1;
-        *localNumOfElements = malloc(numberOfProcessors * sizeof(**localNumOfElements));
-        int i = 0;
-        for (; i < size; i++){
-            *(*localNumOfElements + i) = local;
-        }
-        for (; i < numberOfProcessors;i++){
-            *(*localNumOfElements + i) = 0;
-        }
-    } else {//If there are more rows than available nodes, separate into almost equal pieces.
-        local = size / numberOfProcessors;
-        reminder = size % numberOfProcessors;
-        *localNumOfElements = malloc(numberOfProcessors * sizeof(**localNumOfElements));
-        for (int i = 0; i < numberOfProcessors; i++) {
-            *(*localNumOfElements + i) = local;
-        }
-        *(*localNumOfElements + numberOfProcessors - 1) += reminder;
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <sys/time.h>
+#include "mpi.h"
+#define N 2048
+#define SOURCE 1
+#define MAXINT 9999999
+void SingleSource(int n, int source, int *wgt, int *lengths, MPI_Comm comm) {
+    int temp[N];
+    int i, j;
+    int nlocal; 
+    int *marker;
+    int firstvtx;
+    int lastvtx; 
+    int u, udist;
+    int lminpair[2], gminpair[2];
+    int npes, myrank;
+    MPI_Status status;
+    MPI_Comm_size(comm, &npes);
+    MPI_Comm_rank(comm, &myrank);
+    nlocal = n / npes;
+    firstvtx = myrank*nlocal;
+    lastvtx = firstvtx + nlocal - 1;
+    for (j = 0; j<nlocal; j++) {
+        lengths[j] = wgt[source*nlocal + j];
     }
-    *displs = malloc(numberOfProcessors * sizeof(**displs));
-    for (int i = 0; i < numberOfProcessors; i++) {
-        *(*displs + i) = 0;
-        for (int j = 0; j < i; j++) {
-            *(*displs + i) += *(*localNumOfElements + j);
-        }
+    marker = (int *)malloc(nlocal*sizeof(int));
+    for (j = 0; j<nlocal; j++) {
+        marker[j] = 1;
     }
-}
-static void
-load(
-        char const *const filename,
-        int *const np,
-        float **const ap, int numberOfProcessors, int ** displs, int ** localNumOfElements, int rank
-) {
-    int n;
-    float *a = NULL;
-    if (rank == MAIN_PROCESS) {//Main node read the file and send to other nodes piece by piece.
-        int i, j, k, ret;
-        FILE *fp = NULL;
-        fp = fopen(filename, "r");
-        assert(fp);
-        ret = fscanf(fp, "%d", &n);
-        assert(1 == ret);
-        calculateDispls(displs, localNumOfElements, numberOfProcessors, n);
-        a = malloc(n * *(*localNumOfElements) * sizeof(*a));
-        for (j = 0; j < *(* localNumOfElements) * n; ++j) {
-            ret = fscanf(fp, "%f", &a[j]);
-            assert(1 == ret);
-        }
-        *ap = a;
-        printf("0. %d info read\n", j);//TODO debug use only
-        for (i = 1; i < numberOfProcessors; ++i) {
-            a = malloc(n * *(*localNumOfElements + i) * sizeof(*a));
-            MPI_Send(&n, 1, MPI_INTEGER, i, SEND_NUM_TAG, MPI_COMM_WORLD);
-            MPI_Send(*displs, numberOfProcessors, MPI_INTEGER, i, SEND_DISPLS_TAG, MPI_COMM_WORLD);
-            MPI_Send(*localNumOfElements, numberOfProcessors, MPI_INTEGER, i, SEND_ELEMNTS_TAG, MPI_COMM_WORLD);
-            for (j = 0; j < *(* localNumOfElements + i) * n; ++j) {
-                ret = fscanf(fp, "%f", &a[j]);
-                assert(1 == ret);
+    if (source >= firstvtx && source <= lastvtx) {
+        marker[source - firstvtx] = 0;
+    }
+    for (i = 1; i<n; i++) {
+        lminpair[0] = MAXINT;
+        lminpair[1] = -1;
+        for (j = 0; j<nlocal; j++) {
+            if (marker[j] && lengths[j] < lminpair[0]) {
+                lminpair[0] = lengths[j];
+                lminpair[1] = firstvtx + j;
             }
-            printf("%d. %d info read\n", i, j);//TODO debug use only
-            MPI_Send(&j, 1, MPI_INTEGER, i, SEND_COUNTS_TAG, MPI_COMM_WORLD);
-            MPI_Send(a, j, MPI_FLOAT, i, SEND_WEIGHT_TAG, MPI_COMM_WORLD);
-            free(a);//Free memory after send.
         }
-        ret = fclose(fp);
-        assert(!ret);
-    } else {
-        int count;
-        MPI_Recv(&n, 1, MPI_INTEGER, MAIN_PROCESS, SEND_NUM_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        *displs = malloc(numberOfProcessors * sizeof(**displs));
-        MPI_Recv(*displs, numberOfProcessors, MPI_INTEGER, MAIN_PROCESS, SEND_DISPLS_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        *localNumOfElements = malloc(numberOfProcessors * sizeof(**localNumOfElements));
-        MPI_Recv(*localNumOfElements, numberOfProcessors, MPI_INTEGER, MAIN_PROCESS, SEND_ELEMNTS_TAG, MPI_COMM_WORLD,
-                 MPI_STATUS_IGNORE);
-        MPI_Recv(&count, 1, MPI_INTEGER, MAIN_PROCESS, SEND_COUNTS_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        a = malloc(count * sizeof(*a));
-        MPI_Recv(a, count, MPI_FLOAT, MAIN_PROCESS, SEND_WEIGHT_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        *ap = a;
-    }
-    *np = n;
-    MPI_Barrier(MPI_COMM_WORLD);
-}
-static void
-dijkstra(
-        int const source,
-        int const n,
-        float const *const a,
-        float **const result, int rank, int * displs, int * localNumOfElements, int numberOfProcessors
-) {
-    int i, j, k, sourceNode = 0;
-    struct float_int {
-        float distance;
-        int u;
-    } min;
-    char *set = NULL;
-    float *resultVector = NULL;
-    float * localResult = NULL;
-
-    set = calloc(n, sizeof(*set));
-    assert(set);
-    resultVector = malloc(n * sizeof(*resultVector));
-    assert(resultVector);
-
-    localResult = malloc(n * sizeof(*resultVector));
-    assert(localResult);
-
-    for (i = 0; i < numberOfProcessors; i++){
-        if (source < displs[i]){
-            sourceNode = i - 1;
-            break;
+        MPI_Allreduce(lminpair, gminpair, 1, MPI_2INT, MPI_MINLOC, comm);
+        udist = gminpair[0];
+        u = gminpair[1];
+        if (u == lminpair[1]) {
+            marker[u - firstvtx] = 0;
         }
-    }
-    printf("Source Node: %d.\n", sourceNode);//TODO debug use
-    if (rank == sourceNode) {
-        for (i = 0; i < n; ++i) {
-            resultVector[i] = a[i + n * (source - displs[sourceNode])];
-            printf("%.1f\t", resultVector[i]);
-        }
-    }
-    MPI_Bcast(resultVector, n, MPI_FLOAT, sourceNode, MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
-    set[source] = 1;
-    min.u = -1; 
-    for (i = 1; i < n; ++i) {
-        min.distance = INFINITY;
-        for (j = 0; j < n; ++j) {
-            if (!set[j] && resultVector[j] < min.distance) {
-                min.distance = resultVector[j];
-                min.u = j;
+        for (j = 0; j<nlocal; j++) {
+            if (marker[j] && ((udist + wgt[u*nlocal + j]) < lengths[j])) {
+                lengths[j] = udist + wgt[u*nlocal + j];
             }
-            localResult[j] = resultVector[j];
         }
-        printf("vertex %d is chosen. Distance is: %.1f\n", min.u, min.distance);
-        set[min.u] = 1;
-        for (j = 0; j < localNumOfElements[rank]; j++){
-            if (set[j + displs[rank]]){
-                continue;
-            }
-            if (a(j, min.u) + min.distance < localResult[j + displs[rank]]){
-                localResult[j + displs[rank]] = a(j, min.u) + min.distance;
-            }
-            printf("Vertex %d: Local min is: %.1f\n", j, localResult[j + displs[rank]]);
+    }
+    free(marker);
+}
+int main(int argc, char *argv[]) {
+    int npes, myrank, nlocal;
+    int weight[N][N]; 
+    int distance[N]; 
+    int *localWeight; 
+    int *localDistance;
+    int sendbuf[N*N]; 
+    int i, j, k;
+    char fn[255];
+    FILE *fp;
+    double time_start, time_end;
+    struct timeval tv;
+    struct timezone tz;
+    gettimeofday(&tv, &tz);
+    time_start = (double)tv.tv_sec + (double)tv.tv_usec / 1000000.00;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &npes);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    nlocal = N/npes; 
+    localWeight = (int *)malloc(nlocal*N*sizeof(int));
+    localDistance = (int *)malloc(nlocal*sizeof(int));
+    if (myrank == SOURCE) {
+        strcpy(fn,"input2048.txt");
+        fp = fopen(fn,"r");
+        if ((fp = fopen(fn,"r")) == NULL) {
+            printf("Can't open the input file: %s\n\n", fn);
+            exit(1);
         }
-        MPI_Allreduce(localResult, resultVector, n, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Barrier(MPI_COMM_WORLD);
+        for(i = 0; i < N; i++) {
+            for(j = 0; j < N; j++) {
+                fscanf(fp,"%d", &weight[i][j]);
+            }
+        }
+        for(k=0; k<npes; ++k) {
+            for(i=0; i<N;++i) {
+                for(j=0; j<nlocal;++j) {
+                    sendbuf[k*N*nlocal+i*nlocal+j]=weight[i][k*nlocal+j];
+                }
+            }
+        }
     }
-    free(set);
-    *result = resultVector;
-}
-static void
-print_time(double const seconds) {
-    printf("Operation Time: %0.04fs\n", seconds);
-}
-static void
-print_numbers(
-        char const *const filename,
-        int const n,
-        float const *const numbers) {
-    int i;
-    FILE *fout;
-    if (NULL == (fout = fopen(filename, "w"))) {
-        fprintf(stderr, "error opening '%s'\n", filename);
-        abort();
+    MPI_Scatter(sendbuf, nlocal*N, MPI_INT, localWeight, nlocal*N, MPI_INT, SOURCE, MPI_COMM_WORLD);
+    SingleSource(N, SOURCE, localWeight, localDistance, MPI_COMM_WORLD);
+    MPI_Gather(localDistance, nlocal, MPI_INT, distance, nlocal, MPI_INT, SOURCE, MPI_COMM_WORLD);
+    if (myrank == SOURCE) {
+        printf("Nodes: %d\n", N);
+        gettimeofday(&tv, &tz);
+        time_end = (double)tv.tv_sec + (double)tv.tv_usec / 1000000.00;
+        printf("time cost is %1f\n", time_end - time_start);
     }
-    for (i = 0; i < n; ++i) {
-        fprintf(fout, "%10.4f\n", numbers[i]);
-    }
-    fclose(fout);
-}
-int main(int argc, char **argv) {
-    int n, numberOfProcessors, rank;;
-    double ts, te;
-    float *a = NULL, *result = NULL;
-    int * displs = NULL, *localNumOfElements = NULL;
-    if (argc < 4) {
-        printf("Invalid number of arguments.\nUsage: dijkstra <graph> <source> <output_file>.\n");
-        return EXIT_FAILURE;
-    }
-    MPI_Init(NULL, NULL);
-    MPI_Comm_size(MPI_COMM_WORLD, &numberOfProcessors);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    load(argv[1], &n, &a, numberOfProcessors, &displs, &localNumOfElements, rank);
-    MPI_Barrier(MPI_COMM_WORLD);
-    ts = MPI_Wtime();
-    dijkstra(atoi(argv[2]), n, a, &result, rank, displs, localNumOfElements, numberOfProcessors);
-    te = MPI_Wtime();
-    if (rank == MAIN_PROCESS) {
-        print_time(te - ts);
-        print_numbers(argv[3], n, result);
-    }
-    free(a);
-    free(result);
+    free(localWeight);
+    free(localDistance);
     MPI_Finalize();
-    return EXIT_SUCCESS;
+    return 0;
 }
