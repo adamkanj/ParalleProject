@@ -3,7 +3,7 @@
 #include <time.h>
 #include <math.h>
 #include <omp.h>        
-#define VERTICES 16384          
+#define VERTICES 1024          
 #define DENSITY 32              
 #define MAX_WEIGHT 100000       
 #define INF_DIST 1000000000     
