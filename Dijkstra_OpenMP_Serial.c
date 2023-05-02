@@ -7,7 +7,7 @@
 #define DENSITY 32              
 #define MAX_WEIGHT 100000       
 #define INF_DIST 1000000000     
-#define IMPLEMENTATIONS 1       
+#define IMPLEMENTATIONS 2       
 #define THREADS 4               
 #define RAND_SEED 1234          
 typedef float data_t;           
