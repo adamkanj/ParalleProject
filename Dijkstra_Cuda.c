@@ -6,7 +6,7 @@
 #define DENSITY 16     
 #define MAX_WEIGHT 1000000      
 #define INF_DIST 1000000000     
-#define CPU_IMP 1      
+#define CPU_IMP 0      
 #define GPU_IMP 1               
 #define THREADS 2               
 #define RAND_SEED 1234          
