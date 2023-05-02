@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <time.h>      
 #include <math.h>
-#define VERTICES 16384 
+#define VERTICES 1024
 #define DENSITY 16     
 #define MAX_WEIGHT 1000000      
 #define INF_DIST 1000000000     
